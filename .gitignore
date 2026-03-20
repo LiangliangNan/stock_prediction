@@ -2,3 +2,4 @@
 /src/stock_prediction/__pycache__
 /src/stock_prediction/models/__pycache__
 /stock_daily
+/tests/__pycache__

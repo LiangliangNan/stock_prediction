@@ -411,6 +411,10 @@ def get_stock_data(ts_code: Sequence[str] | str = "", save: bool = True, start_c
     print(f"loading stock symbols from {pool_file} ...")
     stock_list = get_stock_list(pool_file)
 
+    # extra_code = "600879" # 航天电子
+    # stock_list.clear()
+    # stock_list.append(extra_code)
+
   if not stock_list:
     print("💡 提示: 未发现有效股票代码，请检查 pool_core.txt 路径")
     return
