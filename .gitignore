@@ -3,3 +3,4 @@
 /src/stock_prediction/models/__pycache__
 /stock_daily
 /tests/__pycache__
+.DS_Store
