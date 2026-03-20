@@ -407,7 +407,8 @@ def get_stock_data(ts_code: Sequence[str] | str = "", save: bool = True, start_c
   # 1. 获取待处理的股票列表
   stock_list = list(_iterable_from_code(ts_code))
   if not stock_list:
-    pool_file = "/Users/lnan/Documents/Projects/alpha/data/pool_core.txt"
+    pool_file = "/home/liangliang/Documents/Projects/Alpha/data/pool_core.txt" # linux
+    # pool_file = "/Users/lnan/Documents/Projects/alpha/data/pool_core.txt" # macbook
     print(f"loading stock symbols from {pool_file} ...")
     stock_list = get_stock_list(pool_file)
 
@@ -448,7 +449,7 @@ def get_stock_data(ts_code: Sequence[str] | str = "", save: bool = True, start_c
         df = None
         try:
           # 尝试正常调用
-          df = get_price(api_code, frequency='1d', count=1000)
+          df = get_price(api_code, frequency='1d', count=2000, end_date='2026-03-20')
         except Exception as e:
             message = f"{code} {exc}"
             if save and pbar is not None:
