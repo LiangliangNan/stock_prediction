@@ -87,7 +87,7 @@ if isinstance(train_data, queue.Queue):
         symbol_to_id = {}
 else:
     unique_symbols = train_data['ts_code'].unique()
-symbol_to_id = {symbol: i for i, symbol in enumerate(unique_symbols)}
+    symbol_to_id = {symbol: i for i, symbol in enumerate(unique_symbols)}
 
 
 def _apply_norm_from_params(norm_params, symbol=None):
