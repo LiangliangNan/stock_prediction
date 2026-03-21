@@ -1,3 +1,6 @@
+"""
+common.py
+"""
 import re
 import queue
 import copy
@@ -440,7 +443,8 @@ class Stock_Data(Dataset):
                 if self.predict_days <= 0:
                     label[i, :] = torch.tensor(targets, dtype=torch.float32)
                 else:
-                    stacked = torch.tensor(targets, dtype=torch.float32).permute(1, 0)
+                    #stacked = torch.tensor(targets, dtype=torch.float32).permute(1, 0)
+                    stacked = torch.tensor(np.array(targets), dtype=torch.float32).permute(1, 0)
                     label[i, :, :] = stacked
                 if self.symbol_series is not None:
                     symbol_values.append(self._get_symbol_value(i))

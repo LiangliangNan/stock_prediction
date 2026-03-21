@@ -1,3 +1,7 @@
+"""
+hybrid_config.py
+"""
+
 def get_adaptive_hybrid_config(size_hint: str = "auto", data_size: int = 0) -> dict:
     """
     Adaptively adjust Hybrid model configuration based on data size or user specification

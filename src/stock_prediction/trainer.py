@@ -1,4 +1,6 @@
 """
+trainer.py
+
 Reusable Trainer with LR scheduler & EarlyStopping.
 - Handles train/validate loops
 - Integrates torch.optim.lr_scheduler

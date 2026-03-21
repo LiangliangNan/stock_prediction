@@ -1,4 +1,5 @@
 """
+app_config.py
 Configuration loader with optional .env and YAML support, backed by pydantic validation.
 """
 from __future__ import annotations

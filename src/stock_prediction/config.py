@@ -1,4 +1,5 @@
 """
+config.py
 Centralised configuration utilities for managing project paths.
 """
 from __future__ import annotations

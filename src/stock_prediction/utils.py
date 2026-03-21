@@ -1,4 +1,8 @@
-﻿"""Utility helpers for persisting logs and converting JSON payloads."""
+﻿"""
+utils.py
+
+Utility helpers for persisting logs and converting JSON payloads.
+"""
 from __future__ import annotations
 
 import json

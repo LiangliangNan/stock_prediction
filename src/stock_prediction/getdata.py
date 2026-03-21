@@ -1,4 +1,8 @@
-﻿"""Data acquisition helpers for the stock_prediction package."""
+﻿"""
+data.py
+
+Data acquisition helpers for the stock_prediction package.
+"""
 from __future__ import annotations
 
 import argparse

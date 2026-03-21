@@ -1,4 +1,7 @@
-﻿#!/usr/bin/env python
+﻿"""
+train.py
+"""
+#!/usr/bin/env python
 # coding: utf-8
 
 import random

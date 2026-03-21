@@ -1,4 +1,7 @@
-﻿#!/usr/bin/env python
+﻿"""
+predict.py
+"""
+#!/usr/bin/env python
 # coding: utf-8
 import argparse
 import copy
