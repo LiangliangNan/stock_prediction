@@ -259,5 +259,39 @@ def main() -> None:
     get_stock_data(args.code, save=True, save_path=daily_path, start_code=args.start_code)
 
 
+def sort_csv_files_ascending(folder_path):
+  """
+  遍历指定文件夹下的所有 CSV 文件，并按日期列进行物理升序排序。
+  """
+  data_path = Path(folder_path)
+  if not data_path.exists():
+    print(f"错误: 路径 {folder_path} 不存在")
+    return
+
+  processed_count = 0
+  for file in data_path.glob("*.csv"):
+    try:
+      df = pd.read_csv(file)
+      # 自动匹配日期列名（兼容 Tushare 的 trade_date 或其他来源的 Date）
+      date_col = 'trade_date' if 'trade_date' in df.columns else ('Date' if 'Date' in df.columns else None)
+
+      if date_col:
+        # 核心：按日期从小到大（升序）排列
+        df[date_col] = pd.to_datetime(df[date_col].astype(str))  # 确保是日期格式
+        df = df.sort_values(date_col, ascending=True).reset_index(drop=True)
+
+        # 写回原文件，index=False 避免多出一列索引
+        df.to_csv(file, index=False, encoding='utf-8')
+        processed_count += 1
+        print(f"【成功】已物理翻转并对齐升序: {file.name}")
+      else:
+        print(f"【跳过】未在 {file.name} 中找到日期列")
+    except Exception as e:
+      print(f"【失败】处理 {file.name} 时出错: {e}")
+
+  print(f"\n处理完成！共处理 {processed_count} 个文件。")
+
+
 if __name__ == "__main__":
     main()
+    # sort_csv_files_ascending("../../stock_daily")
