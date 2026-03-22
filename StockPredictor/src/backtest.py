@@ -62,7 +62,7 @@ class BacktestEngine:
     self.symbol = symbol
     self.train_end_date = pd.to_datetime(train_end_date)
     self.test_days = test_days
-    self.model_suffix = f"trainend_{train_end_date}"
+    self.model_suffix = f"trainend_{train_end_date}_lstm"
 
     # 结果存储
     self.real_future = None

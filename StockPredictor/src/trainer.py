@@ -48,7 +48,7 @@ class Trainer:
         tqdm.write(log_msg)
 
     # 1. 确定模型和图片名称
-    model_filename = f"{symbol}_{model_name_suffix}_lstm.pth" if model_name_suffix else f"{symbol}_lstm.pth"
+    model_filename = f"{symbol}_{model_name_suffix}.pth" if model_name_suffix else f"{symbol}.pth"
     loss_img_name = model_filename.replace(".pth", "_loss.png")
 
     # 2. 保存模型到 MODEL_DIR
@@ -84,8 +84,8 @@ class Trainer:
     plt.legend()
     plt.grid(True, linestyle=':', alpha=0.6)
 
-    # 核心改动：保存到 OUTPUT_DIR
-    save_path = os.path.join(self.config.OUTPUT_DIR, filename)
+    # 核心改动：保存到 MODEL_DIR
+    save_path = os.path.join(self.config.MODEL_DIR, filename)
     plt.savefig(save_path, dpi=300)
     plt.close()
     print(f"[SUCCESS] Loss 曲线已导出至: {save_path}")
