@@ -23,7 +23,6 @@ CORE LOGIC & ARCHITECTURE:
        - 方向准确率 (Dir Accuracy): 基于每个决策周期的真实起跑点计算，剔除换仓跳跃干扰。
        - 模拟收益率 (Simulated Return): 模拟“预测上涨则持有”策略的真实累计收益。
 
-AUTHOR: Gemini AI Assistant
 DATE: 2026-03-22
 ================================================================================
 """
@@ -32,6 +31,7 @@ import torch
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates # 日期处理模块
 import os
 import joblib
 from datetime import timedelta
@@ -116,6 +116,21 @@ class BacktestEngine:
 
     return start_idx, end_idx
 
+  def _setup_fine_grid(self, ax):
+    """
+    配置加密网格：主刻度5天显示文字，次刻度每天显示虚线
+    """
+    # 设置主要刻度：每5个交易日显示一次日期文字
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=5))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+
+    # 设置次要刻度：每一天一个定位点 (加密核心)
+    ax.xaxis.set_minor_locator(mdates.DayLocator(interval=1))
+
+    # 绘制网格：主网格实线，次网格更细更淡的虚线
+    ax.grid(which='major', linestyle='-', linewidth='0.5', color='gray', alpha=0.5)
+    ax.grid(which='minor', linestyle=':', linewidth='0.3', color='silver', alpha=0.8)
+
   def _plot_single_window(self, current_idx, chunk_dates, chunk_preds):
     """
     绘制并保存单次换仓期间的局部预测走势图
@@ -130,6 +145,7 @@ class BacktestEngine:
     p_preds = [last_hist_price] + chunk_preds
 
     plt.figure(figsize=(10, 5))
+    ax = plt.gca()  # <-- 获取当前坐标轴对象
     plt.plot(hist_df['trade_date_dt'], hist_df['close'], color='black', marker='o', markersize=4, label='History Context')
 
     if not actual_df.empty:
@@ -144,6 +160,7 @@ class BacktestEngine:
                  xytext=(10, 20), textcoords='offset points',
                  arrowprops=dict(arrowstyle='->', color='green'))
 
+    self._setup_fine_grid(ax)
     plt.title(f"Segment Forecast: {self.symbol} | Predict Start: {chunk_dates[0].strftime('%Y-%m-%d')}", fontsize=12)
     plt.grid(True, linestyle=':', alpha=0.5)
     plt.legend()
@@ -265,6 +282,7 @@ class BacktestEngine:
 
     # --- 绘图 ---
     plt.figure(figsize=(12, 6))
+    ax = plt.gca()  # <-- 获取当前坐标轴对象
     plt.plot(self.history_show['trade_date_dt'], self.history_show['close'],
              label='Historical', color='black', marker='o', markersize=4)
 
@@ -291,10 +309,11 @@ class BacktestEngine:
                    fontsize=10, verticalalignment='top', fontweight='bold',
                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
+    self._setup_fine_grid(ax)
     plt.title(f"Rolling Backtest: {self.symbol} | Train End: {self.train_end_date.strftime('%Y-%m-%d')}")
     plt.xlabel("Date")
     plt.ylabel("Price")
-    plt.legend(loc='lower right')
+    plt.legend(loc='lower left')
     plt.grid(True, linestyle=':', alpha=0.5)
     plt.xticks(rotation=45)
     plt.tight_layout()
