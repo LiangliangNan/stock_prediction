@@ -4,3 +4,4 @@
 /stock_daily
 /tests/__pycache__
 .DS_Store
+/StockPredictor/src/__pycache__
