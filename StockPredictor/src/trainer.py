@@ -17,45 +17,57 @@ class Trainer:
   def train_single_stock(self, symbol, dataloader, model_name_suffix=""):
     self.model.train()
     self.loss_history = []
-    print(f"\n[START] 开始训练股票: {symbol}, 设备: {self.config.DEVICE}")
+
+    print(f"\n[START] 开始训练股票: {symbol}, 设备: {self.config.DEVICE}", flush=True)
+    print(f"[INFO] 模型输入维度: {len(self.config.FEATURE_COLS)}")
+    print(f"[INFO] 特征列表: {self.config.FEATURE_COLS}\n", flush=True)
 
     total_epochs = self.config.EPOCHS
-    width = len(str(total_epochs))  # 计算总轮数的数字宽度
+    width = len(str(total_epochs))
 
-    for epoch in range(total_epochs):
-      total_loss = 0
-      # 使用变量 width 动态对齐 desc
-      pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1:>{width}}/{total_epochs}", leave=False)
+    # 1. 预定义对齐格式
+    custom_format = "{desc}: {percentage:3.0f}%|{bar}| {n_fmt:>" + str(
+      width) + "}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
 
-      for batch_x, batch_y in pbar:
-        batch_x, batch_y = batch_x.to(self.config.DEVICE), batch_y.to(self.config.DEVICE).unsqueeze(1)
-        output = self.model(batch_x)
-        loss = self.criterion(output, batch_y)
+    # 2. 核心优雅改动：leave=False 结合手动收尾
+    with tqdm(total=total_epochs, desc=f"TRAIN-{symbol}", unit="ep", dynamic_ncols=True, bar_format=custom_format,
+              leave=True) as pbar:
+      for epoch in range(total_epochs):
+        total_loss = 0
+        for batch_x, batch_y in dataloader:
+          batch_x, batch_y = batch_x.to(self.config.DEVICE), batch_y.to(self.config.DEVICE).unsqueeze(1)
+          output = self.model(batch_x)
+          loss = self.criterion(output, batch_y)
+          self.optimizer.zero_grad()
+          loss.backward()
+          self.optimizer.step()
+          total_loss += loss.item()
 
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        avg_loss = total_loss / len(dataloader)
+        self.loss_history.append(avg_loss)
 
-        total_loss += loss.item()
-        pbar.set_postfix({"Loss": f"{loss.item():.6f}"})
+        current_ep = epoch + 1
+        pbar.set_postfix({"Loss": f"{avg_loss:.6f}"})
 
-      avg_loss = total_loss / len(dataloader)
-      self.loss_history.append(avg_loss)
+        # A. 逻辑解耦：中间过程使用 pbar.write
+        if current_ep % 10 == 0 or current_ep == 1:
+          if current_ep < total_epochs:
+            log_msg = f"  > Epoch [{current_ep:>{width}}/{total_epochs}] - Avg Loss: {avg_loss:8.6f}"
+            pbar.write(log_msg)
 
-      # 严格对齐输出逻辑
-      if (epoch + 1) % 10 == 0 or epoch == 0 or epoch == total_epochs - 1:
-        log_msg = f"\tEpoch [{epoch + 1:>{width}}/{total_epochs}] - Avg Loss: {avg_loss:8.6f}"
-        tqdm.write(log_msg)
+        pbar.update(1)
 
-    # 1. 确定模型和图片名称
+      # B. 关键点：在 with 块结束前，通过 pbar.write 强制把最后一行压入历史栈
+      # 这样它会被视为“旧日志”，从而被进度条顶上去
+      final_msg = f"  > Epoch [{total_epochs:>{width}}/{total_epochs}] - Avg Loss: {self.loss_history[-1]:8.6f}"
+      pbar.write(final_msg)
+
+    # 3. 此时进度条已 close() 并停留在 100% 状态。
+    # 我们不再在这里写 print，避免产生额外的空行。
+
     model_filename = f"{symbol}_{model_name_suffix}.pth" if model_name_suffix else f"{symbol}.pth"
-    loss_img_name = model_filename.replace(".pth", "_loss.png")
-
-    # 2. 保存模型到 MODEL_DIR
     self.save_model(model_filename)
-
-    # 3. 保存 Loss 曲线到 OUTPUT_DIR (路径对齐改进)
-    self.plot_loss(loss_img_name)
+    self.plot_loss(model_filename.replace(".pth", "_loss.png"))
 
   def plot_loss(self, filename):
     plt.figure(figsize=(10, 5))

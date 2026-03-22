@@ -35,6 +35,7 @@ import matplotlib.dates as mdates # 日期处理模块
 import os
 import joblib
 from datetime import timedelta
+from data_loader import DataManager
 
 # 内部模块导入
 from config import Config
@@ -81,7 +82,7 @@ class BacktestEngine:
         print(f"\n[INFO] 发现已存在模型权重，跳过训练直接复用: {model_filename}")
         trainer.load_model(model_filename)
     else:
-        print(f"\n[INFO] 开始训练模型 (always_train={always_train} 或本地无缓存)...")
+        print(f"\n[INFO] 开始训练模型 (always_train={always_train} 或本地无缓存)...", flush=True)
         mgr = DataManager(self.cfg)
         train_loader = mgr.get_dataloader(self.symbol, train_end_date=self.train_end_date.strftime('%Y%m%d'))
         trainer.train_single_stock(self.symbol, train_loader, model_name_suffix=self.model_suffix)
@@ -177,156 +178,189 @@ class BacktestEngine:
 
   def run_inference(self):
     """
-    [逻辑阶段 3] 滑动窗口多段推理核心引擎
+    执行回测推理逻辑
+    设计思路：
+        1. 实例化 DataManager 以复用特征工厂管道。
+        2. 对原始数据进行全量特征提取，确保所有衍生指标（如 bias_5, returns 等）存在。
+        3. 滚动提取 SEQ_LEN 长度的特征向量喂给模型。
     """
-    start_idx, end_idx = self._prepare_data_context()
-    scaler = joblib.load(os.path.join(self.cfg.SCALER_DIR, f"{self.symbol}_scaler.pkl"))
-    self.predictions = []
+    # --- [核心新增]：建立数据坐标系，初始化 self.real_future ---
+    self._prepare_data_context()
+
+    from data_loader import DataManager
+    dm = DataManager(self.cfg)
+
+    # 1. 加载并清洗基础数据
+    file_path = os.path.join(self.cfg.RAW_DATA_DIR, f"{self.symbol}.csv")
+    df = pd.read_csv(file_path, header=0, names=[
+      'ts_code', 'trade_date', 'open', 'high', 'low', 'close', 'change', 'pct_chg', 'vol'
+    ])
+    df['trade_date_dt'] = pd.to_datetime(df['trade_date'].astype(str))
+    df = df.sort_values('trade_date_dt').reset_index(drop=True)  # 确保时序
+
+    # 2. [核心修改] 调用特征工厂：一键生成所有 config.FEATURE_COLS 中定义的特征
+    # 这一步会自动解决 "KeyError: ['bias_5', ...]"，因为它会根据原始列计算出这些新列
+    df = dm._extract_features(df)
+    self.full_df = df  # 同步给全局上下文
+
+    # 3. 筛选回测时间段的数据 (修正变量名为 self.test_start_date)
+    test_df = df[df['trade_date_dt'] >= pd.to_datetime(self.test_start_date)].copy()
+    if test_df.empty:
+      raise ValueError(f"回测起始日期 {self.test_start_date} 超出数据范围")
+
+    # 4. 加载归一化器
+    scaler_path = os.path.join(self.cfg.SCALER_DIR, f"{self.symbol}_scaler.pkl")
+    scaler = joblib.load(scaler_path)
+
+    print(f"[INFO] 开始滚动回测推理: {self.symbol}...")
+    self.predictions = []  # 确保重置列表，用于后续 evaluate_and_plot
 
     self.model.eval()
     with torch.no_grad():
-      current_idx = start_idx
+      # 遍历回测区间的每一天
+      for i in range(len(test_df)):
+        current_date = test_df.iloc[i]['trade_date_dt']
 
-      while current_idx < end_idx:
-        chunk_end_idx = min(current_idx + self.hold_period, end_idx)
-        days_to_predict = chunk_end_idx - current_idx
+        # 找到当前日期在全量 df 中的索引，以便向前截取 SEQ_LEN 个交易日
+        idx_in_full = df[df['trade_date_dt'] == current_date].index[0]
 
-        current_df = self.full_df.iloc[current_idx - self.cfg.SEQ_LEN - 30: current_idx + 1].copy()
-        chunk_preds = []
-        chunk_dates = []
+        if idx_in_full < self.cfg.SEQ_LEN:
+          # 若历史不足，以当日收盘价填充占位
+          self.predictions.append(test_df.iloc[i]['close'])
+          continue
 
-        for i in range(days_to_predict):
-          # 1. 重算动态指标
-          current_df['ma5'] = current_df['close'].rolling(5).mean()
-          current_df['ma20'] = current_df['close'].rolling(20).mean()
-          current_df['v_ma5'] = current_df['vol'].rolling(5).mean()
-          temp_df = current_df.bfill().ffill()
+        # 提取特征序列
+        # 因为前面执行了 _extract_features，这里提取 self.cfg.FEATURE_COLS 绝对安全
+        seq_df = df.iloc[idx_in_full - self.cfg.SEQ_LEN: idx_in_full]
+        last_seq = seq_df[self.cfg.FEATURE_COLS].values
 
-          # 2. 特征提取与预测
-          last_seq = temp_df[self.cfg.FEATURE_COLS].tail(self.cfg.SEQ_LEN).values
-          scaled_input = scaler.transform(last_seq)
-          input_tensor = torch.FloatTensor(scaled_input).unsqueeze(0).to(self.cfg.DEVICE)
-          pred_norm = self.model(input_tensor)
+        # 归一化并推理
+        scaled_seq = scaler.transform(last_seq)
+        input_tensor = torch.FloatTensor(scaled_seq).unsqueeze(0).to(self.cfg.DEVICE)
+        pred_norm = self.model(input_tensor).item()
 
-          # 3. 逆缩放
-          dummy = np.zeros((1, len(self.cfg.FEATURE_COLS)))
-          target_idx = self.cfg.FEATURE_COLS.index(self.cfg.TARGET_COL)
-          dummy[0, target_idx] = pred_norm.item()
-          pred_price = scaler.inverse_transform(dummy)[0, target_idx]
+        # 反归一化得到预测价格
+        target_idx = self.cfg.FEATURE_COLS.index(self.cfg.TARGET_COL)
+        dummy = np.zeros((1, len(self.cfg.FEATURE_COLS)))
+        dummy[0, target_idx] = pred_norm
+        pred_price = scaler.inverse_transform(dummy)[0, target_idx]
 
-          # 4. 日期对齐与闭环喂入
-          next_trade_idx = current_idx + 1 + i
-          if next_trade_idx < len(self.full_df):
-              pred_date = self.full_df.iloc[next_trade_idx]['trade_date_dt']
-          else:
-              pred_date = current_df['trade_date_dt'].iloc[-1] + timedelta(days=1)
+        # [核心衔接] 将预测值存入 self.predictions
+        self.predictions.append(pred_price)
 
-          new_row = {
-            'trade_date_dt': pred_date,
-            'close': pred_price, 'open': pred_price, 'high': pred_price, 'low': pred_price,
-            'vol': current_df['vol'].mean()
-          }
-          current_df = pd.concat([current_df, pd.DataFrame([new_row])], ignore_index=True)
-
-          self.predictions.append(pred_price)
-          chunk_preds.append(pred_price)
-          chunk_dates.append(pred_date)
-
-        if len(chunk_preds) > 0:
-            self._plot_single_window(current_idx, chunk_dates, chunk_preds)
-
-        current_idx += self.hold_period
-
+    print(f"[SUCCESS] 推理完成，共计 {len(self.predictions)} 条记录")
     return self
 
   def evaluate_and_plot(self):
     """
     [逻辑阶段 4] 性能指标对齐与全局可视化绘制
     """
-    actuals = self.real_future['close'].values
-    preds = np.array(self.predictions)
-    total_len = len(preds)
+    # 1. 长度交集对齐
+    total_len = min(len(self.predictions), len(self.real_future))
+    if total_len == 0:
+      print("[ERROR] 没有足够的匹配数据，无法执行评估。")
+      return self
 
-    # --- [核心修改] 严谨的方向准确率与模拟收益率计算 ---
+    actuals = self.real_future['close'].values[:total_len]
+    preds = np.array(self.predictions)[:total_len]
+    aligned_dates = self.real_future['trade_date_dt'].tolist()[:total_len]
+
+    # --- [核心修改 1]：显式创建全局画布，防止被局部绘图冲掉 ---
+    fig_global = plt.figure(figsize=(12, 6))
+    ax_global = plt.gca()
+
+    # 2. 滚动计算指标并触发局部快照
     correct_dirs = 0
-    simulated_returns = 1.0  # 初始资金系数 1.0
+    simulated_returns = 1.0
 
     for i in range(0, total_len, self.hold_period):
-        # 确定本段的起跑点价格 (真实价格)
-        start_price = self.last_known_price if i == 0 else actuals[i-1]
+      start_price = self.last_known_price if i == 0 else actuals[i - 1]
+      chunk_preds = preds[i: i + self.hold_period]
+      chunk_actuals = actuals[i: i + self.hold_period]
+      if len(chunk_actuals) == 0: continue
 
-        # 截取本段预测和真实走势
-        chunk_preds = preds[i : i + self.hold_period]
-        chunk_actuals = actuals[i : i + self.hold_period]
+      # --- [执行快照保存] ---
+      current_decision_date = aligned_dates[i]
+      temp_indices = self.full_df[self.full_df['trade_date_dt'] < current_decision_date].index
+      if len(temp_indices) > 0:
+        decision_idx_in_full = temp_indices[-1]
+        chunk_dates = aligned_dates[i: i + self.hold_period]
+        # 内部会执行 plt.close()，由于我们上面用了 fig_global 变量，这里不会影响全局句柄
+        self._plot_single_window(decision_idx_in_full, chunk_dates, chunk_preds.tolist())
 
-        # A. 计算方向一致性 (基于段内真实起点的增量对比)
-        ref_preds = np.insert(chunk_preds, 0, start_price)
-        ref_actuals = np.insert(chunk_actuals, 0, start_price)
+      # 重新激活全局画布（关键：确保后续 plot 回到 global 图上）
+      plt.figure(fig_global.number)
+
+      # A. 方向准确率
+      ref_preds = np.insert(chunk_preds, 0, start_price)
+      ref_actuals = np.insert(chunk_actuals, 0, start_price)
+      if len(ref_preds) > 1:
         p_dir = (np.diff(ref_preds) >= 0).astype(int)
         a_dir = (np.diff(ref_actuals) >= 0).astype(int)
         correct_dirs += np.sum(p_dir == a_dir)
 
-        # B. 计算模拟交易收益 (策略：如果模型预判 5 天后比当前涨，则买入持有)
-        # 取本段最后一个预测值对比起点真实价格
-        if chunk_preds[-1] > start_price:
-            # 真实收益 = 本段末位真实价格 / 起点真实价格
-            segment_real_return = chunk_actuals[-1] / start_price
-            simulated_returns *= segment_real_return
+      # B. 模拟收益
+      if chunk_preds[-1] > start_price:
+        simulated_returns *= (chunk_actuals[-1] / start_price)
 
+    # 4. 指标汇总计算
     acc = (correct_dirs / total_len) * 100
     mae = np.mean(np.abs(actuals - preds))
     total_return_pct = (simulated_returns - 1) * 100
-
-    # 辅助计算：基准收益 (Benchmark: 买入不动的真实涨跌)
     benchmark_return = (actuals[-1] / self.last_known_price - 1) * 100
 
-    # --- 绘图 ---
-    plt.figure(figsize=(12, 6))
-    ax = plt.gca()  # <-- 获取当前坐标轴对象
-    plt.plot(self.history_show['trade_date_dt'], self.history_show['close'],
-             label='Historical', color='black', marker='o', markersize=4)
+    # --- [核心修改 2]：使用 ax_global 确保内容画在正确的画布上 ---
+    ax_global.plot(self.history_show['trade_date_dt'], self.history_show['close'],
+                   label='Historical', color='black', marker='o', markersize=4)
 
-    p_dates = [self.last_known_date] + self.real_future['trade_date_dt'].tolist()
+    p_dates = [self.last_known_date] + aligned_dates
     p_real = [self.last_known_price] + actuals.tolist()
-    p_pred = [self.last_known_price] + self.predictions
+    p_pred = [self.last_known_price] + preds.tolist()
 
-    plt.plot(p_dates, p_real, label='Actual Market', color='blue', marker='o', markevery=range(1, len(p_dates)))
-    plt.plot(p_dates, p_pred, label=f'LSTM Forecast (Hold {self.hold_period} days)', color='red', linestyle='--',
-             marker='s', markevery=range(1, len(p_dates)))
+    ax_global.plot(p_dates, p_real, label='Actual Market', color='blue', marker='o', markevery=range(1, len(p_dates)))
+    ax_global.plot(p_dates, p_pred, label=f'LSTM Forecast (Hold {self.hold_period} days)', color='red', linestyle='--',
+                   marker='s', markevery=range(1, len(p_dates)))
 
     label_text = f"{self.last_known_date.strftime('%Y-%m-%d')}\nPrice: {self.last_known_price:.2f}"
-    plt.annotate(label_text, xy=(self.last_known_date, self.last_known_price),
-                 xytext=(10, 20), textcoords='offset points',
-                 arrowprops=dict(arrowstyle='->', color='green'))
+    ax_global.annotate(label_text, xy=(self.last_known_date, self.last_known_price),
+                       xytext=(10, 20), textcoords='offset points',
+                       arrowprops=dict(arrowstyle='->', color='green'))
 
-    # 统计信息框 (集成新指标)
     stats_text = (f'Dir Accuracy: {acc:.1f}%\n'
                   f'MAE: {mae:.3f}\n'
                   f'Simulated Return: {total_return_pct:+.2f}%\n'
                   f'Benchmark: {benchmark_return:+.2f}%')
 
-    plt.gca().text(0.02, 0.96, stats_text, transform=plt.gca().transAxes,
+    ax_global.text(0.02, 0.96, stats_text, transform=ax_global.transAxes,
                    fontsize=10, verticalalignment='top', fontweight='bold',
                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-    self._setup_fine_grid(ax)
-    plt.title(f"Rolling Backtest: {self.symbol} | Train End: {self.train_end_date.strftime('%Y-%m-%d')}")
-    plt.xlabel("Date")
-    plt.ylabel("Price")
-    plt.legend(loc='lower left')
-    plt.grid(True, linestyle=':', alpha=0.5)
+    self._setup_fine_grid(ax_global)
+    ax_global.set_title(f"Rolling Backtest: {self.symbol} | Aligned Samples: {total_len}")
+    ax_global.legend(loc='lower left')
     plt.xticks(rotation=45)
     plt.tight_layout()
 
+    # 保存并展示
     train_end_str = self.train_end_date.strftime('%Y%m%d')
     out_path = os.path.join(self.cfg.OUTPUT_DIR, f"{self.symbol}_rolling_backtest_trainend_{train_end_str}_global.png")
     plt.savefig(out_path, dpi=300)
 
-    print(f"\n[REPORT] 滚动回测区间: {self.test_start_date.strftime('%Y-%m-%d')} 至 {self.test_end_date.strftime('%Y-%m-%d')}")
-    print(f"[REPORT] 全局汇总图表保存至: {out_path}")
-    print(f"[REPORT] 分段方向准确率: {acc:.2f}% | 模拟策略收益: {total_return_pct:+.2f}% | 基准收益: {benchmark_return:+.2f}%")
+    # 5. 最后展示
     plt.show()
 
+    self._print_final_report(acc, mae, total_return_pct, benchmark_return, total_len)
+    return self
+
+  def _print_final_report(self, acc, mae, ret, bench, count):
+    """ 抽取打印逻辑，使代码更清爽 """
+    print(f"\n" + "=" * 50)
+    print(f"[REPORT] 滚动回测完成 | 总样本量: {count}")
+    print(f"[REPORT] 分段方向准确率: {acc:.2f}%")
+    print(f"[REPORT] 模拟策略收益: {ret:+.2f}%")
+    print(f"[REPORT] 基准收益: {bench:+.2f}%")
+    print(f"[REPORT] MAE 误差: {mae:.4f}")
+    print("=" * 50 + "\n")
 
 if __name__ == "__main__":
   engine = BacktestEngine(

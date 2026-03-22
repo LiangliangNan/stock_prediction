@@ -12,8 +12,10 @@ class Config:
 
   # --- 特征工程配置 (匹配 9 列 CSV) ---
   FEATURE_COLS = [
-    'open', 'high', 'low', 'close', 'vol',
-    'ma5', 'ma20', 'v_ma5'
+    'open', 'high', 'low', 'close', 'vol',  # 基础特征
+    'ma5', 'ma20', 'v_ma5',                 # 均线特征
+    'bias_5', 'v_ratio',                    # 衍生特征
+    'returns', 'amplitude'                  # 动量特征
   ]
   TARGET_COL = 'close'
 
