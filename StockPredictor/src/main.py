@@ -24,7 +24,7 @@ def main():
 
   # 4. 训练
   trainer = Trainer(cfg, model)
-  trainer.train_single_stock(symbol, train_loader)
+  trainer.train_single_stock(symbol, train_loader, model_name_suffix="lstm")
 
   print("\n[FINISH] 训练任务已完成。你现在可以运行预测脚本了。")
 
