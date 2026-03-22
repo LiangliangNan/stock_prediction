@@ -1,15 +1,22 @@
 """
--------------------------------------------------------------------------
-模型	      |  核心优势	                      |    适用场景
-----------|---------------------------------|----------------------------
-LSTM	    |  经典，具备长短期记忆能力	          |  基础基准测试
-GRU	      |  结构简化，收敛速度快，抗过拟合更好	  |  数据量较少、算力有限时
-Attention |	不再只看最后一天，能回溯历史关键节点	|  存在明显季节性或突发事件的行情
-----------|-------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
+     模型	  ｜             核心优势	                              ｜    适用场景
+------------｜--------------------------------------------------｜-----------------------------------
+LSTM	      ｜  经典, 具备长短期记忆能力	                          ｜ 基础基准测试
+----------------------------------------------------------------------------------------------------
+GRU	        ｜  结构简化, 收敛速度快, 抗过拟合更好	                  ｜ 数据量较少、算力有限时
+----------------------------------------------------------------------------------------------------
+Attention   ｜	不再只看最后一天, 能回溯历史关键节点	                ｜ 存在明显季节性或突发事件的行情
+----------------------------------------------------------------------------------------------------
+Transformer ｜ 自注意力机制 (Self-Attention): 同时观察序列中所有点    ｜ 数据大（数据量太小时容易过拟合，产生幻觉）
+            ｜ 矩阵并行计算 (快)                                   ｜
+            ｜ 擅长捕捉非线性跨度关系 (如: 30天前的暴跌与今天的反弹逻辑) ｜
+----------------------------------------------------------------------------------------------------
 """
 
 import torch
 import torch.nn as nn
+import math
 
 
 class StockLSTM(nn.Module):
@@ -108,6 +115,59 @@ class StockAttentionLSTM(nn.Module):
     return prediction
 
 
+
+class PositionalEncoding(nn.Module):
+  def __init__(self, d_model, max_len=5000):
+    super(PositionalEncoding, self).__init__()
+    pe = torch.zeros(max_len, d_model)
+    position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    pe = pe.unsqueeze(0)
+    self.register_buffer('pe', pe)
+
+  def forward(self, x):
+    return x + self.pe[:, :x.size(1)]
+
+
+class StockTransformer(nn.Module):
+  def __init__(self, config):
+    super(StockTransformer, self).__init__()
+    self.model_type = 'Transformer'
+
+    # 1. 输入线性层：将特征维度映射到 Transformer 的 d_model (通常等于 HIDDEN_DIM)
+    self.input_fc = nn.Linear(config.INPUT_DIM, config.HIDDEN_DIM)
+
+    # 2. 位置编码
+    self.pos_encoder = PositionalEncoding(config.HIDDEN_DIM)
+
+    # 3. Transformer Encoder 层
+    encoder_layers = nn.TransformerEncoderLayer(
+      d_model=config.HIDDEN_DIM,
+      nhead=8,  # 多头注意力，必须能被 HIDDEN_DIM 整除
+      dim_feedforward=config.HIDDEN_DIM * 2,
+      dropout=config.DROPOUT,
+      batch_first=True
+    )
+    self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=config.NUM_LAYERS)
+
+    # 4. 输出层
+    self.decoder = nn.Linear(config.HIDDEN_DIM, config.OUTPUT_DIM)
+
+  def forward(self, x):
+    # x shape: [batch, seq_len, input_dim]
+    x = self.input_fc(x)  # 映射到隐藏层维度
+    x = self.pos_encoder(x)
+
+    # 通过 Transformer 编码器
+    output = self.transformer_encoder(x)
+
+    # 取最后一个时间步进行预测
+    last_step_out = output[:, -1, :]
+    return self.decoder(last_step_out)
+
+
 def get_model(config):
   """
   模型工厂函数：根据 config.MODEL_NAME 自动返回实例化的模型对象
@@ -115,7 +175,8 @@ def get_model(config):
   model_map = {
     "lstm": StockLSTM,
     "gru": StockGRU,
-    "attention_lstm": StockAttentionLSTM
+    "attention_lstm": StockAttentionLSTM,
+    "transformer": StockTransformer
   }
 
   model_key = config.MODEL_NAME.lower()

@@ -10,8 +10,8 @@ class Config:
     OUTPUT_DIR = os.path.join(BASE_DIR, "../output")
 
     # --- 模型选择配置 ---
-    # 可选: 'lstm', 'gru', 'attention_lstm'
-    MODEL_NAME = 'attention_lstm'
+    # 可选: 'lstm', 'gru', 'attention_lstm', 'transformer'
+    MODEL_NAME = 'transformer'
 
     # --- 特征工程配置 ---
     FEATURE_COLS = [
@@ -28,7 +28,7 @@ class Config:
 
     # --- 模型架构参数 ---
     INPUT_DIM = len(FEATURE_COLS)  # 自动根据 FEATURE_COLS 长度计算 (当前为 12)
-    HIDDEN_DIM = 128
+    HIDDEN_DIM = 128 # 对 transformer，HIDDEN_DIM 必须能被 nhead（多头注意力的头数）整除
     NUM_LAYERS = 2
     OUTPUT_DIM = 1
     DROPOUT = 0.2
