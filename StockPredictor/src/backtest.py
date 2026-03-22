@@ -178,13 +178,11 @@ class BacktestEngine:
 
   def run_inference(self):
     """
-    执行回测推理逻辑
+    执行回测推理逻辑 (优化版：按 hold_period 跳跃推理，消除计算浪费)
     设计思路：
-        1. 实例化 DataManager 以复用特征工厂管道。
-        2. 对原始数据进行全量特征提取，确保所有衍生指标（如 bias_5, returns 等）存在。
-        3. 滚动提取 SEQ_LEN 长度的特征向量喂给模型。
+        1. 仅在决策日（i, i+hold_period...）提取特征并推理。
+        2. 如果模型是单步预测，则在决策日基于当时信息预测未来价格。
     """
-    # --- [核心新增]：建立数据坐标系，初始化 self.real_future ---
     self._prepare_data_context()
 
     from data_loader import DataManager
@@ -196,14 +194,13 @@ class BacktestEngine:
       'ts_code', 'trade_date', 'open', 'high', 'low', 'close', 'change', 'pct_chg', 'vol'
     ])
     df['trade_date_dt'] = pd.to_datetime(df['trade_date'].astype(str))
-    df = df.sort_values('trade_date_dt').reset_index(drop=True)  # 确保时序
+    df = df.sort_values('trade_date_dt').reset_index(drop=True)
 
-    # 2. [核心修改] 调用特征工厂：一键生成所有 config.FEATURE_COLS 中定义的特征
-    # 这一步会自动解决 "KeyError: ['bias_5', ...]"，因为它会根据原始列计算出这些新列
+    # 2. 调用特征工厂
     df = dm._extract_features(df)
-    self.full_df = df  # 同步给全局上下文
+    self.full_df = df
 
-    # 3. 筛选回测时间段的数据 (修正变量名为 self.test_start_date)
+    # 3. 定位回测区间数据
     test_df = df[df['trade_date_dt'] >= pd.to_datetime(self.test_start_date)].copy()
     if test_df.empty:
       raise ValueError(f"回测起始日期 {self.test_start_date} 超出数据范围")
@@ -212,43 +209,40 @@ class BacktestEngine:
     scaler_path = os.path.join(self.cfg.SCALER_DIR, f"{self.symbol}_scaler.pkl")
     scaler = joblib.load(scaler_path)
 
-    print(f"[INFO] 开始滚动回测推理: {self.symbol}...")
-    self.predictions = []  # 确保重置列表，用于后续 evaluate_and_plot
+    print(f"[INFO] 开始按持仓期({self.hold_period}天)进行跳跃回测: {self.symbol}...")
+    self.predictions = []
 
     self.model.eval()
     with torch.no_grad():
-      # 遍历回测区间的每一天
-      for i in range(len(test_df)):
+      # --- [核心修改]：i 以 self.hold_period 为步长跳跃 ---
+      for i in range(0, len(test_df), self.hold_period):
         current_date = test_df.iloc[i]['trade_date_dt']
-
-        # 找到当前日期在全量 df 中的索引，以便向前截取 SEQ_LEN 个交易日
         idx_in_full = df[df['trade_date_dt'] == current_date].index[0]
 
+        # 提取决策日当天的特征序列
         if idx_in_full < self.cfg.SEQ_LEN:
-          # 若历史不足，以当日收盘价填充占位
-          self.predictions.append(test_df.iloc[i]['close'])
-          continue
+          pred_price = test_df.iloc[i]['close']
+        else:
+          seq_df = df.iloc[idx_in_full - self.cfg.SEQ_LEN: idx_in_full]
+          last_seq = seq_df[self.cfg.FEATURE_COLS].values
 
-        # 提取特征序列
-        # 因为前面执行了 _extract_features，这里提取 self.cfg.FEATURE_COLS 绝对安全
-        seq_df = df.iloc[idx_in_full - self.cfg.SEQ_LEN: idx_in_full]
-        last_seq = seq_df[self.cfg.FEATURE_COLS].values
+          scaled_seq = scaler.transform(last_seq)
+          input_tensor = torch.FloatTensor(scaled_seq).unsqueeze(0).to(self.cfg.DEVICE)
+          pred_norm = self.model(input_tensor).item()
 
-        # 归一化并推理
-        scaled_seq = scaler.transform(last_seq)
-        input_tensor = torch.FloatTensor(scaled_seq).unsqueeze(0).to(self.cfg.DEVICE)
-        pred_norm = self.model(input_tensor).item()
+          target_idx = self.cfg.FEATURE_COLS.index(self.cfg.TARGET_COL)
+          dummy = np.zeros((1, len(self.cfg.FEATURE_COLS)))
+          dummy[0, target_idx] = pred_norm
+          pred_price = scaler.inverse_transform(dummy)[0, target_idx]
 
-        # 反归一化得到预测价格
-        target_idx = self.cfg.FEATURE_COLS.index(self.cfg.TARGET_COL)
-        dummy = np.zeros((1, len(self.cfg.FEATURE_COLS)))
-        dummy[0, target_idx] = pred_norm
-        pred_price = scaler.inverse_transform(dummy)[0, target_idx]
+        # --- [逻辑对齐]：模拟决策 ---
+        # 决策日预测了一个价格 pred_price，在整个 hold_period 期间，
+        # 我们的“预期目标”保持不变，直到下一个决策日重新计算。
+        for step in range(self.hold_period):
+          if i + step < len(test_df):
+            self.predictions.append(pred_price)
 
-        # [核心衔接] 将预测值存入 self.predictions
-        self.predictions.append(pred_price)
-
-    print(f"[SUCCESS] 推理完成，共计 {len(self.predictions)} 条记录")
+    print(f"[SUCCESS] 跳跃推理完成，有效决策点数: {int(np.ceil(len(test_df) / self.hold_period))}")
     return self
 
   def evaluate_and_plot(self):
