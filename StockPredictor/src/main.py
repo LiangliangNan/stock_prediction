@@ -1,7 +1,7 @@
 import os
 from config import Config
 from data_loader import DataManager
-from model import StockLSTM
+from model import get_model  # 只需要导入这个工厂函数
 from trainer import Trainer
 
 
@@ -19,12 +19,12 @@ def main():
     return
 
   # 3. 初始化模型
-  # 注意：INPUT_DIM 会根据 config.FEATURE_COLS 自动计算
-  model = StockLSTM(cfg)
+  model = get_model(cfg)
 
   # 4. 训练
   trainer = Trainer(cfg, model)
-  trainer.train_single_stock(symbol, train_loader, model_name_suffix="lstm")
+  # 这里的后缀也直接引用配置，保持一致性
+  trainer.train_single_stock(symbol, train_loader, model_name_suffix=cfg.MODEL_NAME.lower())
 
   print("\n[FINISH] 训练任务已完成。你现在可以运行预测脚本了。")
 

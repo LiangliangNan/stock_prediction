@@ -34,13 +34,11 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates # 日期处理模块
 import os
 import joblib
-from datetime import timedelta
-from data_loader import DataManager
 
 # 内部模块导入
 from config import Config
 from data_loader import DataManager
-from model import StockLSTM
+from model import get_model
 from trainer import Trainer
 
 
@@ -56,7 +54,8 @@ class BacktestEngine:
     self.test_start_date = pd.to_datetime(test_start_date)
     self.test_end_date = pd.to_datetime(test_end_date)
     self.hold_period = hold_period
-    self.model_suffix = f"trainend_{train_end_date}_lstm"
+    model_key = self.cfg.MODEL_NAME.lower()
+    self.model_suffix = f"trainend_{train_end_date}_{model_key}"
 
     # 结果存储
     self.real_future = None
@@ -75,14 +74,15 @@ class BacktestEngine:
     model_filename = f"{self.symbol}_{self.model_suffix}.pth"
     model_path = os.path.join(self.cfg.MODEL_DIR, model_filename)
 
-    self.model = StockLSTM(self.cfg)
+    # --- 修改这里：由 get_model 统一创建 ---
+    self.model = get_model(self.cfg)
     trainer = Trainer(self.cfg, self.model)
 
     if os.path.exists(model_path) and not always_train:
-        print(f"\n[INFO] 发现已存在模型权重，跳过训练直接复用: {model_filename}")
+        print(f"[INFO] 发现已存在模型权重，跳过训练直接复用: {model_filename}")
         trainer.load_model(model_filename)
     else:
-        print(f"\n[INFO] 开始训练模型 (always_train={always_train} 或本地无缓存)...", flush=True)
+        print(f"[INFO] 开始训练模型 (always_train={always_train} 或本地无缓存)...", flush=True)
         mgr = DataManager(self.cfg)
         train_loader = mgr.get_dataloader(self.symbol, train_end_date=self.train_end_date.strftime('%Y%m%d'))
         trainer.train_single_stock(self.symbol, train_loader, model_name_suffix=self.model_suffix)
@@ -170,7 +170,7 @@ class BacktestEngine:
 
     train_end_str = self.train_end_date.strftime('%Y%m%d')
     start_str = chunk_dates[0].strftime('%Y%m%d')
-    fname = f"{self.symbol}_rolling_backtest_trainend_{train_end_str}_pred_start_{start_str}_hold_{self.hold_period}.png"
+    fname = f"{self.symbol}_rolling_backtest_trainend_{train_end_str}_pred_start_{start_str}_hold_{self.hold_period}-{self.cfg.MODEL_NAME.upper()}.png"
 
     out_path = os.path.join(self.cfg.OUTPUT_DIR, fname)
     plt.savefig(out_path, dpi=300)
@@ -303,6 +303,7 @@ class BacktestEngine:
     total_return_pct = (simulated_returns - 1) * 100
     benchmark_return = (actuals[-1] / self.last_known_price - 1) * 100
 
+    model_key = self.cfg.MODEL_NAME.upper()  # 获取大写的名称如 GRU
     # --- [核心修改 2]：使用 ax_global 确保内容画在正确的画布上 ---
     ax_global.plot(self.history_show['trade_date_dt'], self.history_show['close'],
                    label='Historical', color='black', marker='o', markersize=4)
@@ -312,7 +313,7 @@ class BacktestEngine:
     p_pred = [self.last_known_price] + preds.tolist()
 
     ax_global.plot(p_dates, p_real, label='Actual Market', color='blue', marker='o', markevery=range(1, len(p_dates)))
-    ax_global.plot(p_dates, p_pred, label=f'LSTM Forecast (Hold {self.hold_period} days)', color='red', linestyle='--',
+    ax_global.plot(p_dates, p_pred, label=f'{model_key} Forecast (Hold {self.hold_period} days)', color='red', linestyle='--',
                    marker='s', markevery=range(1, len(p_dates)))
 
     label_text = f"{self.last_known_date.strftime('%Y-%m-%d')}\nPrice: {self.last_known_price:.2f}"
@@ -337,7 +338,7 @@ class BacktestEngine:
 
     # 保存并展示
     train_end_str = self.train_end_date.strftime('%Y%m%d')
-    out_path = os.path.join(self.cfg.OUTPUT_DIR, f"{self.symbol}_rolling_backtest_trainend_{train_end_str}_global.png")
+    out_path = os.path.join(self.cfg.OUTPUT_DIR, f"{self.symbol}_rolling_backtest_trainend_{train_end_str}_global-{model_key}.png")
     plt.savefig(out_path, dpi=300)
 
     # 5. 最后展示
@@ -349,6 +350,7 @@ class BacktestEngine:
   def _print_final_report(self, acc, mae, ret, bench, count):
     """ 抽取打印逻辑，使代码更清爽 """
     print(f"\n" + "=" * 50)
+    print(f"[REPORT] 模型架构: {self.cfg.MODEL_NAME.upper()}")
     print(f"[REPORT] 滚动回测完成 | 总样本量: {count}")
     print(f"[REPORT] 分段方向准确率: {acc:.2f}%")
     print(f"[REPORT] 模拟策略收益: {ret:+.2f}%")

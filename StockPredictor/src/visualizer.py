@@ -9,22 +9,22 @@ DESCRIPTION:
 ================================================================================
 """
 
+import os
+import torch
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import pandas as pd
-import torch
-import os
-import sys # 新增：用于优雅退出程序
 from config import Config
-from model import StockLSTM
+from model import get_model
 from predictor import Predictor
 
 
 def plot_prediction(symbol, future_days=10):
   cfg = Config()
+  model_key = cfg.MODEL_NAME.lower()
 
   # 1. 检查模型文件是否存在 (逻辑增强)
-  model_filename = f"{symbol}_lstm.pth"
+  model_filename = f"{symbol}_{model_key}.pth"
   model_path = os.path.join(cfg.MODEL_DIR, model_filename)
 
   if not os.path.exists(model_path):
@@ -37,10 +37,10 @@ def plot_prediction(symbol, future_days=10):
 
   # 2. 加载模型
   try:
-      model = StockLSTM(cfg)
+      model = get_model(cfg) # 自动创建正确类型的模型
       model.load_state_dict(torch.load(model_path, map_location=cfg.DEVICE))
       model.eval() # 确保进入评估模式
-      print(f"[INFO] 成功加载模型权重: {model_filename}")
+      print(f"[INFO] 成功加载模型权重: {model_key.upper()}")
   except Exception as e:
       print(f"[ERROR] 模型加载失败: {e}")
       return
@@ -86,7 +86,7 @@ def plot_prediction(symbol, future_days=10):
                textcoords='offset points',
                arrowprops=dict(arrowstyle='->', color='green'))
 
-  plt.title(f"Stock {symbol} Price Prediction (Next {future_days} Days)")
+  plt.title(f"Stock {symbol} Price Prediction (Next {future_days} Days - {model_key.upper()})")
   plt.xlabel("Date")
   plt.ylabel("Price")
 
@@ -108,7 +108,7 @@ def plot_prediction(symbol, future_days=10):
   plt.tight_layout()
 
   # 保存
-  output_filename = f"{symbol}_future_forecast.png"
+  output_filename = f"{symbol}_future_forecast - {model_key.upper()}.png"
   output_path = os.path.join(cfg.OUTPUT_DIR, output_filename)
   plt.savefig(output_path, dpi=300)
   print(f"\n[SUCCESS] 预测图表已保存至: {output_path}")
