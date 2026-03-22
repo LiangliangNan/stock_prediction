@@ -112,7 +112,7 @@ def run_backtest(symbol, train_end_date, test_days=20):
                xy=(last_known_date, last_known_price),
                xytext=(10, 15),  # 稍微调高偏移量以适应两行文字
                textcoords='offset points',
-               arrowprops=dict(arrowstyle='->', color='black'))
+               arrowprops=dict(arrowstyle='->', color='green'))
 
   # 细节装饰
   plt.title(f"Backtest Analysis: {symbol} | Training Ends: {train_end_date}", fontsize=14)

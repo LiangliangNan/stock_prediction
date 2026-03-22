@@ -59,7 +59,25 @@ class Trainer:
 
   def plot_loss(self, filename):
     plt.figure(figsize=(10, 5))
-    plt.plot(range(1, len(self.loss_history) + 1), self.loss_history, label='Train Loss', color='#d62728')
+    epochs = range(1, len(self.loss_history) + 1)
+    plt.plot(epochs, self.loss_history, label='Train Loss', color='blue')
+
+    # --- 新增：在曲线末端标注最后的 Loss 数值 ---
+    last_epoch = epochs[-1]
+    last_loss = self.loss_history[-1]
+
+    plt.annotate(f'Final Loss: {last_loss:.6f}',
+                 xy=(last_epoch, last_loss),
+                 xytext=(-10, 10),  # 文字相对于点的偏移：向左10像素，向上10像素
+                 textcoords='offset points',
+                 ha='right',  # 水平对齐：右对齐，防止文字超出右边界
+                 va='bottom',  # 垂直对齐：底部对齐
+                 fontsize=10,
+                 color='red',
+                 fontweight='bold',
+                 arrowprops=dict(arrowstyle='->', color='red', alpha=0.5))
+    # ----------------------------------------
+
     plt.title('Training Loss Convergence', fontsize=12)
     plt.xlabel('Epochs')
     plt.ylabel('MSE Loss')

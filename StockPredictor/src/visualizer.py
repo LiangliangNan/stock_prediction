@@ -60,7 +60,7 @@ def plot_prediction(symbol, future_days=10):
                xy=(last_hist_date, last_hist_close),
                xytext=(10, 15),  # 稍微调高偏移量 (从10升到15) 以适应两行文字
                textcoords='offset points',
-               arrowprops=dict(arrowstyle='->', color='black'))
+               arrowprops=dict(arrowstyle='->', color='green'))
 
   plt.title(f"Stock {symbol} Price Prediction (Next {future_days} Days)")
   plt.xlabel("Date")
