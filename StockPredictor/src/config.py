@@ -31,7 +31,7 @@ class Config:
   # --- 训练超参数 ---
   BATCH_SIZE = 32
   LR = 0.0005   # 如果 Loss 剧烈抖动就调小，如果不动就调大
-  EPOCHS = 50   # 100
+  EPOCHS = 100   # 100
   DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
   @classmethod

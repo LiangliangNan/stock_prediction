@@ -30,7 +30,18 @@ def run_backtest(symbol, train_end_date, test_days=20):
   full_df['trade_date_dt'] = pd.to_datetime(full_df['trade_date'].astype(str))
   full_df = full_df.sort_values('trade_date_dt').reset_index(drop=True)
 
-  split_idx = full_df[full_df['trade_date_dt'] <= pd.to_datetime(train_end_date)].index[-1]
+  # 定位截断点
+  split_indices = full_df[full_df['trade_date_dt'] <= pd.to_datetime(train_end_date)].index
+  if len(split_indices) == 0:
+    print(f"[ERROR] 找不到日期 {train_end_date}")
+    return
+  split_idx = split_indices[-1]
+
+  # 记录截断点的数据点（用于连接线条）
+  last_known_date = full_df.iloc[split_idx]['trade_date_dt']
+  last_known_price = full_df.iloc[split_idx]['close']
+
+  # 提取真实发生的未来数据
   real_future = full_df.iloc[split_idx + 1: split_idx + 1 + test_days].copy()
 
   # 滚动预测逻辑
@@ -67,17 +78,41 @@ def run_backtest(symbol, train_end_date, test_days=20):
   # 提取展示用的历史区间
   hist_show = full_df.iloc[max(0, split_idx - 30): split_idx + 1]
 
-  # 绘制历史线：黑色 (已知数据)
+  # A. 绘制历史线：黑色 (包含最后一个点)
   plt.plot(hist_show['trade_date_dt'], hist_show['close'],
            label='Historical (Known)', color='black', marker='o', markersize=4, linewidth=2)
 
-  # 绘制真实未来线：蓝色 (实际走势)
-  plt.plot(real_future['trade_date_dt'], real_future['close'],
-           label='Real Market (Actual)', color='blue', marker='o', markersize=4, linewidth=2)
+  # 准备连接点
+  last_known_date = full_df.iloc[split_idx]['trade_date_dt']
+  last_known_price = full_df.iloc[split_idx]['close']
 
-  # 绘制模型预测线：红色 (预测走势)
-  plt.plot(real_future['trade_date_dt'], predictions,
-           label='Model Forecast (Predicted)', color='red', linestyle='--', marker='s', markersize=5)
+  # --- 核心修正：确保日期和价格列表长度严格一致 ---
+
+  # 蓝色真实线数据：[连接点] + 后面10天的真实日期和价格
+  plot_real_dates = [last_known_date] + real_future['trade_date_dt'].tolist()
+  plot_real_prices = [last_known_price] + real_future['close'].tolist()
+
+  # 红色预测线数据：[连接点] + 后面10天的预测价格
+  # 注意：日期必须使用和蓝色线完全一样的 plot_real_dates
+  plot_pred_prices = [last_known_price] + predictions
+
+  # B. 绘制真实未来线：蓝色 (使用 markevery 跳过第0个点，确保交汇处是黑色)
+  plt.plot(plot_real_dates, plot_real_prices,
+           label='Real Market (Actual)', color='blue', marker='o', markersize=4, linewidth=2,
+           markevery=range(1, len(plot_real_dates)))
+
+  # C. 绘制模型预测线：红色虚线 (同样跳过第0个点)
+  plt.plot(plot_real_dates, plot_pred_prices,
+           label='Model Forecast (Predicted)', color='red', linestyle='--', marker='s', markersize=5,
+           markevery=range(1, len(plot_real_dates)))
+
+  # D. 增加标注：显示截断点的价格和日期
+  label_text = f"{last_known_date.strftime('%Y-%m-%d')}\nPrice: {last_known_price:.2f}"
+  plt.annotate(label_text,
+               xy=(last_known_date, last_known_price),
+               xytext=(10, 15),  # 稍微调高偏移量以适应两行文字
+               textcoords='offset points',
+               arrowprops=dict(arrowstyle='->', color='black'))
 
   # 细节装饰
   plt.title(f"Backtest Analysis: {symbol} | Training Ends: {train_end_date}", fontsize=14)
@@ -87,13 +122,13 @@ def run_backtest(symbol, train_end_date, test_days=20):
   plt.grid(True, linestyle=':', alpha=0.6)
   plt.xticks(rotation=45)
 
-  # 在截断点增加一条垂直辅助线，区分“已知”和“预测”
-  plt.axvline(pd.to_datetime(train_end_date), color='gray', linestyle='-.', alpha=0.5)
-  plt.text(pd.to_datetime(train_end_date), plt.ylim()[0], ' Train End', color='gray', fontsize=10)
+  # 垂直辅助线
+  plt.axvline(last_known_date, color='gray', linestyle='-.', alpha=0.5)
+  plt.text(last_known_date, plt.ylim()[0], ' Train End', color='gray', fontsize=10)
 
   plt.tight_layout()
 
-  # 保存图片到 OUTPUT_DIR，使用 300 DPI 高清输出
+  # 保存图片
   plot_filename = f"{symbol}_{model_suffix}_backtest.png"
   plot_path = os.path.join(cfg.OUTPUT_DIR, plot_filename)
   plt.savefig(plot_path, dpi=300)

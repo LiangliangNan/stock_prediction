@@ -12,24 +12,23 @@ class Trainer:
     self.model = model.to(config.DEVICE)
     self.criterion = nn.MSELoss()
     self.optimizer = optim.Adam(self.model.parameters(), lr=config.LR)
-    self.loss_history = []  # 用于记录每轮的平均 Loss
+    self.loss_history = []
 
   def train_single_stock(self, symbol, dataloader, model_name_suffix=""):
-    """
-    model_name_suffix: 用于区分不同日期的模型后缀
-    """
     self.model.train()
     self.loss_history = []
-    print(f"\n[START] 开始训练股票: {symbol} | 设备: {self.config.DEVICE}")
+    print(f"\n[START] 开始训练股票: {symbol}, 设备: {self.config.DEVICE}")
 
-    for epoch in range(self.config.EPOCHS):
+    total_epochs = self.config.EPOCHS
+    width = len(str(total_epochs))  # 计算总轮数的数字宽度
+
+    for epoch in range(total_epochs):
       total_loss = 0
-      pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{self.config.EPOCHS}", leave=False)
+      # 使用变量 width 动态对齐 desc
+      pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1:>{width}}/{total_epochs}", leave=False)
 
       for batch_x, batch_y in pbar:
-        batch_x = batch_x.to(self.config.DEVICE)
-        batch_y = batch_y.to(self.config.DEVICE).unsqueeze(1)
-
+        batch_x, batch_y = batch_x.to(self.config.DEVICE), batch_y.to(self.config.DEVICE).unsqueeze(1)
         output = self.model(batch_x)
         loss = self.criterion(output, batch_y)
 
@@ -43,26 +42,35 @@ class Trainer:
       avg_loss = total_loss / len(dataloader)
       self.loss_history.append(avg_loss)
 
-      if (epoch + 1) % 10 == 0 or epoch == 0:
-        print(f"Epoch [{epoch + 1}/{self.config.EPOCHS}] - Avg Loss: {avg_loss:.6f}")
+      # 严格对齐输出逻辑
+      if (epoch + 1) % 10 == 0 or epoch == 0 or epoch == total_epochs - 1:
+        log_msg = f"\tEpoch [{epoch + 1:>{width}}/{total_epochs}] - Avg Loss: {avg_loss:8.6f}"
+        tqdm.write(log_msg)
 
-    # 保存模型和 Loss 曲线
+    # 1. 确定模型和图片名称
     model_filename = f"{symbol}_{model_name_suffix}_lstm.pth" if model_name_suffix else f"{symbol}_lstm.pth"
+    loss_img_name = model_filename.replace(".pth", "_loss.png")
+
+    # 2. 保存模型到 MODEL_DIR
     self.save_model(model_filename)
-    self.plot_loss(model_filename.replace(".pth", "_loss.png"))
+
+    # 3. 保存 Loss 曲线到 OUTPUT_DIR (路径对齐改进)
+    self.plot_loss(loss_img_name)
 
   def plot_loss(self, filename):
     plt.figure(figsize=(10, 5))
-    plt.plot(range(1, len(self.loss_history) + 1), self.loss_history, label='Train Loss')
-    plt.title('Training Loss Curve')
+    plt.plot(range(1, len(self.loss_history) + 1), self.loss_history, label='Train Loss', color='#d62728')
+    plt.title('Training Loss Convergence', fontsize=12)
     plt.xlabel('Epochs')
     plt.ylabel('MSE Loss')
     plt.legend()
-    plt.grid(True)
-    save_path = os.path.join(self.config.MODEL_DIR, filename)
-    plt.savefig(save_path)
+    plt.grid(True, linestyle=':', alpha=0.6)
+
+    # 核心改动：保存到 OUTPUT_DIR
+    save_path = os.path.join(self.config.OUTPUT_DIR, filename)
+    plt.savefig(save_path, dpi=300)
     plt.close()
-    print(f"[SUCCESS] Loss 曲线已保存: {save_path}")
+    print(f"[SUCCESS] Loss 曲线已导出至: {save_path}")
 
   def save_model(self, filename):
     save_path = os.path.join(self.config.MODEL_DIR, filename)
@@ -76,6 +84,4 @@ class Trainer:
       self.model.eval()
       print(f"[LOG] 加载模型成功: {load_path}")
       return True
-    else:
-      print(f"[WARN] 未找到模型文件: {load_path}")
-      return False
+    return False

@@ -37,7 +37,7 @@ def plot_prediction(symbol, future_days=10):
   # 4. 绘图
   plt.figure(figsize=(12, 6))
 
-  # 画历史线
+  # 画历史线 (蓝色，包含最后一个圆点)
   plt.plot(recent_history['trade_date'], recent_history['close'], label='History', color='blue', marker='o')
 
   # 画预测线 (为了连贯，把历史最后一天加进预测线的开头)
@@ -47,7 +47,20 @@ def plot_prediction(symbol, future_days=10):
   pred_dates = [last_hist_date] + pd.to_datetime(future_df['date']).tolist()
   pred_prices = [last_hist_close] + future_df['predicted_close'].tolist()
 
-  plt.plot(pred_dates, pred_prices, label='Prediction', color='red', linestyle='--', marker='s')
+  # --- 修正点：使用 markevery 跳过第0个点(历史终点)的红色方块绘制 ---
+  # 确保交汇点保持蓝色
+  plt.plot(pred_dates, pred_prices, label='Prediction', color='red', linestyle='--',
+           marker='s', markevery=range(1, len(pred_dates)))
+
+  # --- 修正点：同时标注日期和价格 (使用 \n 换行保持整洁) ---
+  # 将日期格式化为 YYYY-MM-DD
+  label_text = f"{last_hist_date.strftime('%Y-%m-%d')}\nLatest: {last_hist_close:.2f}"
+
+  plt.annotate(label_text,
+               xy=(last_hist_date, last_hist_close),
+               xytext=(10, 15),  # 稍微调高偏移量 (从10升到15) 以适应两行文字
+               textcoords='offset points',
+               arrowprops=dict(arrowstyle='->', color='black'))
 
   plt.title(f"Stock {symbol} Price Prediction (Next {future_days} Days)")
   plt.xlabel("Date")
